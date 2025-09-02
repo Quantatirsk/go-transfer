@@ -93,13 +93,23 @@ func main() {
 		log.Fatalf("配置错误: %v", err)
 	}
 	
-	// 创建并启动服务
-	ft := &FileTransfer{
-		mode:        config.Mode,
-		port:        config.Port,
-		storagePath: config.StoragePath,
-		targetURL:   config.TargetURL,
+	// 根据配置的模式执行相应功能
+	switch config.Mode {
+	case "client":
+		// 客户端模式 - 上传文件
+		runConfiguredClient(config)
+		
+	case "receiver", "forward":
+		// 服务器模式 - 启动服务
+		ft := &FileTransfer{
+			mode:        config.Mode,
+			port:        config.Port,
+			storagePath: config.StoragePath,
+			targetURL:   config.TargetURL,
+		}
+		ft.Start()
+		
+	default:
+		log.Fatalf("未知模式: %s", config.Mode)
 	}
-	
-	ft.Start()
 }
