@@ -39,3 +39,4 @@ test.sh
 
 # YoYo AI version control directory
 .yoyo/
+.yoyo/db/snapshot_embeddings.sqlitejs
