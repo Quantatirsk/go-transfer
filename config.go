@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -297,24 +296,3 @@ func (cm *ConfigManager) displayConfig(config *Config) {
 	fmt.Println()
 }
 
-// expandPath 展开路径中的~符号
-func expandPath(path string) string {
-	if !strings.HasPrefix(path, "~") {
-		return path
-	}
-
-	usr, err := user.Current()
-	if err != nil {
-		return path
-	}
-
-	if path == "~" {
-		return usr.HomeDir
-	}
-
-	if strings.HasPrefix(path, "~/") {
-		return filepath.Join(usr.HomeDir, path[2:])
-	}
-
-	return path
-}

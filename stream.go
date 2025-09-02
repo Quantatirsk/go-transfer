@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"strings"
 	"time"
 )
-
 
 // extractFileName 从请求中提取文件名
 func extractFileName(r *http.Request) string {
@@ -31,7 +29,6 @@ func StreamUploadHandler(ft *FileTransfer) http.HandlerFunc {
 			http.Error(w, "仅支持POST方法", http.StatusMethodNotAllowed)
 			return
 		}
-
 
 		// 检查Content-Type
 		contentType := r.Header.Get("Content-Type")
@@ -99,12 +96,12 @@ func handleBinaryUpload(ft *FileTransfer, w http.ResponseWriter, r *http.Request
 // handleReceiveFile 接收并保存文件（FormData）
 func handleReceiveFile(ft *FileTransfer, w http.ResponseWriter, file multipart.File, fileName string, size int64) {
 	expandedPath := expandPath(ft.storagePath)
-	
+
 	// 处理带路径的文件名
 	// 将斜杠路径分隔符转换为系统路径分隔符
 	systemFileName := filepath.FromSlash(fileName)
 	finalPath := filepath.Join(expandedPath, systemFileName)
-	
+
 	// 如果文件名包含路径，创建目录
 	finalDir := filepath.Dir(finalPath)
 	if finalDir != expandedPath {
@@ -117,14 +114,14 @@ func handleReceiveFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 	// 立即显示开始接收文件
 	if size > 0 {
 		sizeMB := float64(size) / 1024 / 1024
-		log.Printf("⬇️  开始接收: %s (预计 %.2f MB) [FormData]", fileName, sizeMB)
+		LogInfo("⬇️  开始接收: %s (%.2f MB) [FormData]", fileName, sizeMB)
 	} else {
-		log.Printf("⬇️  开始接收: %s [FormData]", fileName)
+		LogInfo("⬇️  开始接收: %s [FormData]", fileName)
 	}
 
 	// 检查文件是否已存在
 	if _, err := os.Stat(finalPath); err == nil {
-		log.Printf("⚠️  文件已存在，将被覆盖: %s", fileName)
+		LogWarn("文件已存在，将被覆盖: %s", fileName)
 	}
 
 	// 创建目标文件（如果存在则覆盖）
@@ -136,12 +133,7 @@ func handleReceiveFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 	defer outFile.Close()
 
 	// 创建进度跟踪的Writer
-	progressWriter := &ProgressWriter{
-		Writer:    outFile,
-		Total:     size,
-		FileName:  fileName,
-		StartTime: time.Now(),
-	}
+	progressWriter := NewProgressWriter(outFile, size, "接收进度")
 
 	// 流式复制 - 带进度跟踪
 	written, err := io.Copy(progressWriter, file)
@@ -152,16 +144,16 @@ func handleReceiveFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 	}
 
 	// 完成进度条显示
-	progressWriter.printProgress()
+	progressWriter.PrintProgress()
 	fmt.Println() // 换行
-	
-	// 计算传输时间
-	duration := time.Since(progressWriter.StartTime)
-	speed := float64(written) / duration.Seconds() / 1024 / 1024
 
+	// 计算传输速度
+	speed := progressWriter.GetSpeed()
+	speedMB := speed / 1024 / 1024
 	writtenMB := float64(written) / 1024 / 1024
-	log.Printf("✅ 文件已保存: %s (%.2f MB, %.2f MB/s, 耗时 %.1fs)",
-		fileName, writtenMB, speed, duration.Seconds())
+	
+	LogSuccess("文件已保存: %s (%.2f MB, %.2f MB/s)",
+		fileName, writtenMB, speedMB)
 	fmt.Fprintf(w, "文件上传成功: %s (%d bytes)", fileName, written)
 }
 
@@ -172,9 +164,9 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 	// 立即显示开始转发
 	if size > 0 {
 		sizeMB := float64(size) / 1024 / 1024
-		log.Printf("🔄 开始转发: %s (预计 %.2f MB) → %s [FormData]", fileName, sizeMB, targetURL)
+		LogInfo("🔄 开始转发: %s (%.2f MB) → %s [FormData]", fileName, sizeMB, targetURL)
 	} else {
-		log.Printf("🔄 开始转发: %s → %s [FormData]", fileName, targetURL)
+		LogInfo("🔄 开始转发: %s → %s [FormData]", fileName, targetURL)
 	}
 
 	startTime := time.Now()
@@ -189,14 +181,11 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 		defer pipeWriter.Close()
 
 		// 创建进度跟踪的Writer
-		progressPipe := &ProgressPipeWriter{
-			Writer:      pipeWriter,
-			Total:       size,
-			FileName:    fileName,
-			StartTime:   startTime,
-			Transferred: &transferredBytes,
-			LogPrefix:   "上传",
-		}
+		progressPipe := NewProgressWriter(pipeWriter, size, "上传进度")
+		// 更新已传输字节数
+		defer func() {
+			_, _, _ = progressPipe.GetProgress()
+		}()
 
 		// 使用 4MB 缓冲区提高传输效率
 		buffer := make([]byte, 4*1024*1024)
@@ -252,20 +241,20 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 
 	// 换行结束进度条
 	fmt.Println()
-	
+
 	duration := time.Since(startTime)
 	speed := float64(transferredBytes) / duration.Seconds() / 1024 / 1024
 
 	if err1 != nil {
-		log.Printf("❌ 转发失败: %v", err1)
+		LogError("转发失败: %v", err1)
 		if err2 == nil {
 			http.Error(w, err1.Error(), http.StatusBadGateway)
 		}
 	} else if err2 != nil {
-		log.Printf("❌ 转发失败: %v", err2)
+		LogError("转发失败: %v", err2)
 	} else {
 		transferredMB := float64(transferredBytes) / 1024 / 1024
-		log.Printf("✅ 成功转发: %s (%.2f MB, %.2f MB/s, 耗时 %.1fs)",
+		LogSuccess("成功转发: %s (%.2f MB, %.2f MB/s, 耗时 %.1fs)",
 			fileName, transferredMB, speed, duration.Seconds())
 	}
 }
@@ -273,12 +262,12 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 // handleStreamReceive 流式接收（二进制流）
 func handleStreamReceive(ft *FileTransfer, w http.ResponseWriter, r *http.Request, fileName string) {
 	expandedPath := expandPath(ft.storagePath)
-	
+
 	// 处理带路径的文件名
 	// 将斜杠路径分隔符转换为系统路径分隔符
 	systemFileName := filepath.FromSlash(fileName)
 	finalPath := filepath.Join(expandedPath, systemFileName)
-	
+
 	// 如果文件名包含路径，创建目录
 	finalDir := filepath.Dir(finalPath)
 	if finalDir != expandedPath {
@@ -286,21 +275,20 @@ func handleStreamReceive(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 			http.Error(w, fmt.Sprintf("创建目录失败: %v", err), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("📁 创建目录: %s", filepath.Dir(systemFileName))
 	}
 
 	// 立即显示开始接收文件
 	contentLength := r.ContentLength
 	if contentLength > 0 {
 		sizeMB := float64(contentLength) / 1024 / 1024
-		log.Printf("⬇️  开始接收: %s (预计 %.2f MB)", fileName, sizeMB)
+		LogInfo("⬇️  开始接收: %s (%.2f MB)", fileName, sizeMB)
 	} else {
-		log.Printf("⬇️  开始接收: %s", fileName)
+		LogInfo("⬇️  开始接收: %s", fileName)
 	}
 
 	// 检查文件是否已存在
 	if _, err := os.Stat(finalPath); err == nil {
-		log.Printf("⚠️  文件已存在，将被覆盖: %s", fileName)
+		LogWarn("文件已存在，将被覆盖: %s", fileName)
 	}
 
 	// 创建目标文件（如果存在则覆盖）
@@ -312,12 +300,7 @@ func handleStreamReceive(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 	defer outFile.Close()
 
 	// 创建进度跟踪的Writer
-	progressWriter := &ProgressWriter{
-		Writer:    outFile,
-		Total:     contentLength,
-		FileName:  fileName,
-		StartTime: time.Now(),
-	}
+	progressWriter := NewProgressWriter(outFile, contentLength, "接收进度")
 
 	// 流式复制 - 带进度跟踪
 	written, err := io.Copy(progressWriter, r.Body)
@@ -328,16 +311,16 @@ func handleStreamReceive(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 	}
 
 	// 完成进度条显示
-	progressWriter.printProgress()
+	progressWriter.PrintProgress()
 	fmt.Println() // 换行
-	
-	// 计算传输时间
-	duration := time.Since(progressWriter.StartTime)
-	speed := float64(written) / duration.Seconds() / 1024 / 1024
 
+	// 计算传输速度
+	speed := progressWriter.GetSpeed()
+	speedMB := speed / 1024 / 1024
 	writtenMB := float64(written) / 1024 / 1024
-	log.Printf("✅ 文件已保存: %s (%.2f MB, %.2f MB/s, 耗时 %.1fs)",
-		fileName, writtenMB, speed, duration.Seconds())
+	
+	LogSuccess("文件已保存: %s (%.2f MB, %.2f MB/s)",
+		fileName, writtenMB, speedMB)
 	fmt.Fprintf(w, "文件上传成功: %s (%d bytes)", fileName, written)
 }
 
@@ -351,9 +334,9 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 	// 立即显示开始转发
 	if contentLength > 0 {
 		sizeMB := float64(contentLength) / 1024 / 1024
-		log.Printf("🔄 开始转发: %s (预计 %.2f MB) → %s", fileName, sizeMB, targetURL)
+		LogInfo("🔄 开始转发: %s (%.2f MB) → %s", fileName, sizeMB, targetURL)
 	} else {
-		log.Printf("🔄 开始转发: %s → %s", fileName, targetURL)
+		LogInfo("🔄 开始转发: %s → %s", fileName, targetURL)
 	}
 
 	startTime := time.Now()
@@ -370,14 +353,12 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 		defer pipeWriter.Close()
 
 		// 创建进度跟踪的Writer
-		progressPipe := &ProgressPipeWriter{
-			Writer:      pipeWriter,
-			Total:       contentLength,
-			FileName:    fileName,
-			StartTime:   startTime,
-			Transferred: &transferredBytes,
-			LogPrefix:   "上传",
-		}
+		progressPipe := NewProgressWriter(pipeWriter, contentLength, "上传进度")
+		// 更新已传输字节数
+		defer func() {
+			current, _, _ := progressPipe.GetProgress()
+			transferredBytes = current
+		}()
 
 		// 使用较小的缓冲区（256KB），避免过度缓冲导致的背压问题
 		// 较小的缓冲区能更快地感知下游压力，实现更平滑的流控
@@ -449,253 +430,23 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 	speed := float64(transferredBytes) / duration.Seconds() / 1024 / 1024
 
 	if err1 != nil {
-		log.Printf("❌ 转发失败: %v", err1)
+		LogError("转发失败: %v", err1)
 		if err2 == nil {
 			// 如果只有一个错误，返回错误信息
 			http.Error(w, err1.Error(), http.StatusBadGateway)
 		}
 	} else if err2 != nil {
-		log.Printf("❌ 转发失败: %v", err2)
+		LogError("转发失败: %v", err2)
 		http.Error(w, err2.Error(), http.StatusBadGateway)
 	} else {
 		transferredMB := float64(transferredBytes) / 1024 / 1024
-		log.Printf("✅ 成功转发: %s (%.2f MB, %.2f MB/s, 耗时 %.1fs)",
+		LogSuccess("成功转发: %s (%.2f MB, %.2f MB/s, 耗时 %.1fs)",
 			fileName, transferredMB, speed, duration.Seconds())
 	}
 }
 
-// StreamForwardWithProgress 带进度的流式转发（可选）
-func StreamForwardWithProgress(ft *FileTransfer, w http.ResponseWriter, r *http.Request, fileName string) {
-	targetURL := ft.targetURL
-
-	// 创建进度跟踪的Reader
-	progressReader := &ProgressReader{
-		Reader:   r.Body,
-		Total:    r.ContentLength,
-		FileName: fileName,
-	}
-
-	// 创建转发请求
-	req, err := http.NewRequest("POST", targetURL+"/upload?name="+fileName, progressReader)
-	if err != nil {
-		http.Error(w, "创建请求失败", http.StatusInternalServerError)
-		return
-	}
-
-	req.ContentLength = r.ContentLength
-	req.Header.Set("X-File-Name", fileName)
-
-	// 使用自定义Transport实现零缓存
-	client := &http.Client{
-		Transport: &http.Transport{
-			DisableCompression: true,
-			// 禁用请求缓冲
-			WriteBufferSize: 0,
-			ReadBufferSize:  0,
-		},
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("转发失败: %v", err), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// 流式返回响应
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-// ProgressReader 带进度跟踪的Reader
-type ProgressReader struct {
-	Reader   io.Reader
-	Total    int64
-	Current  int64
-	FileName string
-	LastLog  time.Time
-}
-
-func (pr *ProgressReader) Read(p []byte) (int, error) {
-	n, err := pr.Reader.Read(p)
-	pr.Current += int64(n)
-
-	// 每秒打印一次进度
-	now := time.Now()
-	if now.Sub(pr.LastLog) > time.Second && pr.Total > 0 {
-		percentage := float64(pr.Current) / float64(pr.Total) * 100
-		log.Printf("转发进度 %s: %.1f%% (%d/%d bytes)",
-			pr.FileName, percentage, pr.Current, pr.Total)
-		pr.LastLog = now
-	}
-
-	return n, err
-}
-
-// ProgressWriter 带进度跟踪的Writer（用于接收文件）
-type ProgressWriter struct {
-	Writer    io.Writer
-	Total     int64
-	Current   int64
-	FileName  string
-	LastPrint time.Time
-	StartTime time.Time
-}
-
-func (pw *ProgressWriter) Write(p []byte) (int, error) {
-	n, err := pw.Writer.Write(p)
-	pw.Current += int64(n)
-
-	// 每100ms更新一次进度（和客户端保持一致）
-	now := time.Now()
-	if now.Sub(pw.LastPrint) >= 100*time.Millisecond || err == io.EOF {
-		pw.printProgress()
-		pw.LastPrint = now
-	}
-
-	return n, err
-}
-
-func (pw *ProgressWriter) printProgress() {
-	if pw.Total == 0 && pw.Current == 0 {
-		return
-	}
-
-	percentage := float64(0)
-	if pw.Total > 0 {
-		percentage = float64(pw.Current) * 100 / float64(pw.Total)
-	}
-	
-	elapsed := time.Since(pw.StartTime).Seconds()
-	speed := float64(0)
-	eta := float64(0)
-	
-	if elapsed > 0 {
-		speed = float64(pw.Current) / elapsed
-		if speed > 0 && pw.Total > 0 {
-			eta = float64(pw.Total-pw.Current) / speed
-		}
-	}
-
-	// 构建进度条（和客户端保持一致的风格）
-	barLength := 40
-	filled := 0
-	if pw.Total > 0 {
-		filled = int(float64(barLength) * float64(pw.Current) / float64(pw.Total))
-	}
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barLength-filled)
-
-	// 构建固定长度的输出字符串，避免残影
-	const lineWidth = 120 // 固定行宽
-	var output string
-	
-	if pw.Total > 0 {
-		// 格式化各个部分，确保固定宽度
-		percentStr := fmt.Sprintf("%5.1f%%", percentage) // 固定5字符宽
-		sizeStr := fmt.Sprintf("%s/%s", formatSize(pw.Current), formatSize(pw.Total))
-		speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
-		
-		output = fmt.Sprintf("接收进度: [%s] %s %-20s 速度: %-12s",
-			bar, percentStr, sizeStr, speedStr)
-		
-		if eta > 0 && pw.Current < pw.Total {
-			etaStr := fmt.Sprintf("剩余: %d秒", int(eta))
-			output = fmt.Sprintf("%s %-15s", output, etaStr)
-		}
-	} else {
-		// 未知大小时的进度显示
-		sizeStr := formatSize(pw.Current)
-		speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
-		output = fmt.Sprintf("接收进度: %-15s 速度: %-12s", sizeStr, speedStr)
-	}
-	
-	// 使用固定宽度输出，多余部分用空格填充，避免残影
-	fmt.Printf("\r%-*s", lineWidth, output)
-}
-
-// ProgressPipeWriter 带进度跟踪的管道Writer（用于转发）
-type ProgressPipeWriter struct {
-	Writer      io.Writer
-	Total       int64
-	FileName    string
-	LastPrint   time.Time
-	StartTime   time.Time
-	Transferred *int64
-	LogPrefix   string
-}
-
-func (ppw *ProgressPipeWriter) Write(p []byte) (int, error) {
-	n, err := ppw.Writer.Write(p)
-	*ppw.Transferred += int64(n)
-
-	// 每100ms更新一次进度（和客户端保持一致）
-	now := time.Now()
-	if now.Sub(ppw.LastPrint) >= 100*time.Millisecond || err == io.EOF {
-		ppw.printProgress()
-		ppw.LastPrint = now
-	}
-
-	return n, err
-}
-
-func (ppw *ProgressPipeWriter) printProgress() {
-	current := *ppw.Transferred
-	if current == 0 {
-		return
-	}
-
-	percentage := float64(0)
-	if ppw.Total > 0 {
-		percentage = float64(current) * 100 / float64(ppw.Total)
-	}
-	
-	elapsed := time.Since(ppw.StartTime).Seconds()
-	speed := float64(0)
-	eta := float64(0)
-	
-	if elapsed > 0 {
-		speed = float64(current) / elapsed
-		if speed > 0 && ppw.Total > 0 {
-			eta = float64(ppw.Total-current) / speed
-		}
-	}
-
-	// 构建进度条
-	barLength := 40
-	filled := 0
-	if ppw.Total > 0 {
-		filled = int(float64(barLength) * float64(current) / float64(ppw.Total))
-	}
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barLength-filled)
-
-	// 构建固定长度的输出字符串，避免残影
-	const lineWidth = 120 // 固定行宽
-	var output string
-	
-	if ppw.Total > 0 {
-		// 格式化各个部分，确保固定宽度
-		percentStr := fmt.Sprintf("%5.1f%%", percentage) // 固定5字符宽
-		sizeStr := fmt.Sprintf("%s/%s", formatSize(current), formatSize(ppw.Total))
-		speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
-		
-		output = fmt.Sprintf("%s进度: [%s] %s %-20s 速度: %-12s",
-			ppw.LogPrefix, bar, percentStr, sizeStr, speedStr)
-		
-		if eta > 0 && current < ppw.Total {
-			etaStr := fmt.Sprintf("剩余: %d秒", int(eta))
-			output = fmt.Sprintf("%s %-15s", output, etaStr)
-		}
-	} else {
-		// 未知大小时的进度显示
-		sizeStr := formatSize(current)
-		speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
-		output = fmt.Sprintf("%s进度: %-15s 速度: %-12s", 
-			ppw.LogPrefix, sizeStr, speedStr)
-	}
-	
-	// 使用固定宽度输出，多余部分用空格填充，避免残影
-	fmt.Printf("\r%-*s", lineWidth, output)
-}
+// 注意：进度跟踪功能已移至 progress.go 统一管理
+// 使用 NewProgressReader 和 NewProgressWriter 创建进度跟踪器
 
 /*
 使用示例：

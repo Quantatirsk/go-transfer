@@ -5,8 +5,7 @@
       "Bash(pip install:*)",
       "Bash(sed:*)",
       "Bash(curl:*)",
-      "Bash(./go-transfer:*)",
-      "Bash(GOOS=windows GOARCH=amd64 go build -o go-transfer-windows-amd64.exe -ldflags=\"-s -w\" .)"
+      "Bash(./go-transfer:*)"
     ],
     "deny": [],
     "ask": []

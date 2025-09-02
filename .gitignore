@@ -18,8 +18,7 @@
 go.work
 
 # Built binaries
-go-transfer
-go-transfer-*
+dist/
 
 # macOS
 .DS_Store
