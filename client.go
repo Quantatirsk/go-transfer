@@ -3,25 +3,53 @@ package main
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
-	"archive/zip"
 )
 
 // TransferClient 文件传输客户端
 type TransferClient struct {
-	serverURL string
-	filePath  string
-	isDir     bool
+	serverURL  string
+	filePath   string
+	isDir      bool
+	httpClient *http.Client
 }
 
 // NewTransferClient 创建新的传输客户端
 func NewTransferClient() *TransferClient {
-	return &TransferClient{}
+	// 创建优化的 HTTP 客户端，彻底解决 Windows 端口耗尽问题
+	transport := &http.Transport{
+		// 关键设置：限制连接数为1，强制串行和连接复用
+		MaxConnsPerHost:     1,  // 每个主机只保持1个连接
+		MaxIdleConnsPerHost: 1,  // 每个主机只保持1个空闲连接
+		MaxIdleConns:        1,  // 总共只保持1个空闲连接
+		IdleConnTimeout:     300 * time.Second, // 5分钟空闲超时
+		DisableKeepAlives:   false, // 必须启用 Keep-Alive 来复用连接
+		// 关键：强制 HTTP/1.1，避免 HTTP/2 的多路复用问题
+		ForceAttemptHTTP2: false,
+		// 增加响应头超时，避免慢速服务器导致的问题
+		ResponseHeaderTimeout: 60 * time.Second,
+		// 启用 TCP Keep-Alive 保持连接活跃
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second, // TCP Keep-Alive
+		}).DialContext,
+	}
+	
+	client := &http.Client{
+		Timeout:   30 * time.Minute,
+		Transport: transport,
+	}
+	
+	return &TransferClient{
+		httpClient: client,
+	}
 }
 
 
@@ -61,6 +89,7 @@ func (tc *TransferClient) uploadFile() error {
 	
 	fileInfo, _ := file.Stat()
 	fileSize := fileInfo.Size()
+	// 单个文件上传时，只使用文件名，不包含路径
 	fileName := filepath.Base(tc.filePath)
 	
 	fmt.Printf("📁 文件: %s\n", fileName)
@@ -74,7 +103,7 @@ func (tc *TransferClient) uploadFile() error {
 		StartTime: time.Now(),
 	}
 	
-	// 构建上传URL
+	// 构建上传URL，文件名不包含路径
 	uploadURL := fmt.Sprintf("%s/upload?name=%s", tc.serverURL, url.QueryEscape(fileName))
 	
 	// 创建请求
@@ -86,12 +115,8 @@ func (tc *TransferClient) uploadFile() error {
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = fileSize
 	
-	// 执行上传
-	client := &http.Client{
-		Timeout: 30 * time.Minute,
-	}
-	
-	resp, err := client.Do(req)
+	// 执行上传（使用共享的客户端）
+	resp, err := tc.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -106,93 +131,157 @@ func (tc *TransferClient) uploadFile() error {
 	return nil
 }
 
-// uploadDirectory 上传目录（打包为zip）
+// uploadDirectory 上传目录（逐个上传文件，保留路径结构）
 func (tc *TransferClient) uploadDirectory() error {
-	// 创建临时zip文件
-	tempFile, err := os.CreateTemp("", "transfer-*.zip")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tempFile.Name())
-	defer tempFile.Close()
-	
-	fmt.Printf("📦 正在打包目录...\n")
-	
-	// 创建zip写入器
-	zipWriter := zip.NewWriter(tempFile)
-	
-	// 遍历目录并添加到zip
+	// 获取目录名称作为路径前缀
 	baseDir := filepath.Base(tc.filePath)
-	err = filepath.Walk(tc.filePath, func(path string, info os.FileInfo, err error) error {
+	
+	// 收集所有文件信息
+	var files []struct {
+		path     string
+		relPath  string
+		size     int64
+	}
+	
+	var totalSize int64
+	
+	// 遍历目录收集文件信息
+	err := filepath.Walk(tc.filePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		
-		// 跳过目录本身
+		// 跳过目录
 		if info.IsDir() {
 			return nil
 		}
 		
-		// 计算相对路径
+		// 计算相对路径（相对于传入的目录）
 		relPath, err := filepath.Rel(tc.filePath, path)
 		if err != nil {
 			return err
 		}
 		
-		// 在zip中创建文件路径
-		zipPath := filepath.Join(baseDir, relPath)
+		// 构建包含目录名的完整路径
+		uploadName := filepath.Join(baseDir, relPath)
+		// 将路径分隔符统一为斜杠（跨平台兼容）
+		uploadName = strings.ReplaceAll(uploadName, string(filepath.Separator), "/")
 		
-		// 创建zip文件条目
-		writer, err := zipWriter.Create(zipPath)
-		if err != nil {
-			return err
-		}
+		files = append(files, struct {
+			path     string
+			relPath  string
+			size     int64
+		}{
+			path:    path,
+			relPath: uploadName,
+			size:    info.Size(),
+		})
 		
-		// 打开源文件
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		
-		// 复制文件内容
-		_, err = io.Copy(writer, file)
-		return err
+		totalSize += info.Size()
+		return nil
 	})
 	
 	if err != nil {
 		return err
 	}
 	
-	// 关闭zip写入器
-	if err := zipWriter.Close(); err != nil {
-		return err
+	if len(files) == 0 {
+		return fmt.Errorf("目录中没有文件")
 	}
 	
-	// 获取zip文件大小
-	zipInfo, err := tempFile.Stat()
+	fmt.Printf("📂 准备上传 %d 个文件，总大小: %s\n\n", len(files), formatSize(totalSize))
+	
+	// 在 Windows 上显示优化提示
+	if runtime.GOOS == "windows" && len(files) > 50 {
+		fmt.Println("💡 提示: 检测到大量文件传输，已启用 Windows 端口优化策略")
+		fmt.Println("   - 使用单连接复用技术")
+		fmt.Println("   - 自动重试机制")
+		fmt.Println("   - 智能延迟控制")
+		fmt.Println()
+	}
+	
+	// 逐个上传文件（严格串行，一次只上传一个）
+	for i, fileInfo := range files {
+		fmt.Printf("[%d/%d] 上传: %s (%s)\n", i+1, len(files), fileInfo.relPath, formatSize(fileInfo.size))
+		
+		// 上传单个文件
+		err := tc.uploadSingleFile(fileInfo.path, fileInfo.relPath, fileInfo.size)
+		if err != nil {
+			// 如果是端口耗尽错误，显示优化建议
+			if strings.Contains(err.Error(), "Only one usage of each socket address") {
+				fmt.Println("\n❌ 检测到 Windows 端口耗尽问题")
+				OptimizeWindowsTCP()
+			}
+			return fmt.Errorf("上传失败 %s: %v", fileInfo.relPath, err)
+		}
+		
+		fmt.Println() // 进度条后换行
+	}
+	
+	return nil
+}
+
+// uploadSingleFile 上传单个文件（内部方法）
+func (tc *TransferClient) uploadSingleFile(filePath, uploadName string, fileSize int64) error {
+	// 重试机制，最多重试3次
+	maxRetries := 3
+	var lastErr error
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// 如果是重试，等待一段时间让系统释放端口
+		if attempt > 1 {
+			waitTime := time.Duration(attempt-1) * 2 * time.Second
+			fmt.Printf("\n⏳ 等待 %v 后重试 (第 %d/%d 次)...\n", waitTime, attempt, maxRetries)
+			time.Sleep(waitTime)
+		}
+		
+		// 执行上传
+		err := tc.doUploadSingleFile(filePath, uploadName, fileSize)
+		if err == nil {
+			// 上传成功后，在 Windows 上等待一小段时间
+			// 让系统有时间释放端口，避免下一个文件上传时端口耗尽
+			if runtime.GOOS == "windows" {
+				time.Sleep(100 * time.Millisecond)
+			}
+			return nil
+		}
+		
+		lastErr = err
+		
+		// 检查是否是端口耗尽错误
+		if strings.Contains(err.Error(), "Only one usage of each socket address") ||
+			strings.Contains(err.Error(), "EADDRINUSE") ||
+			strings.Contains(err.Error(), "address already in use") {
+			// 端口耗尽，等待更长时间
+			if attempt < maxRetries {
+				fmt.Printf("\n⚠️ 检测到端口耗尽，等待系统释放资源...\n")
+				time.Sleep(5 * time.Second)
+			}
+		}
+	}
+	
+	return fmt.Errorf("重试 %d 次后仍然失败: %v", maxRetries, lastErr)
+}
+
+// doUploadSingleFile 实际执行上传
+func (tc *TransferClient) doUploadSingleFile(filePath, uploadName string, fileSize int64) error {
+	// 打开文件
+	file, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("打开文件失败: %v", err)
 	}
-	
-	fmt.Printf("✅ 打包完成，大小: %s\n\n", formatSize(zipInfo.Size()))
-	
-	// 重新打开文件进行上传
-	tempFile.Seek(0, 0)
+	defer file.Close()
 	
 	// 创建进度读取器
 	reader := &progressReader{
-		Reader:    tempFile,
-		Total:     zipInfo.Size(),
+		Reader:    file,
+		Total:     fileSize,
 		Current:   0,
 		StartTime: time.Now(),
 	}
 	
 	// 构建上传URL
-	zipName := filepath.Base(tc.filePath) + ".zip"
-	uploadURL := fmt.Sprintf("%s/upload?name=%s", tc.serverURL, url.QueryEscape(zipName))
-	
-	fmt.Printf("📤 上传中: %s\n", zipName)
+	uploadURL := fmt.Sprintf("%s/upload?name=%s", tc.serverURL, url.QueryEscape(uploadName))
 	
 	// 创建请求
 	req, err := http.NewRequest("POST", uploadURL, reader)
@@ -201,25 +290,31 @@ func (tc *TransferClient) uploadDirectory() error {
 	}
 	
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = zipInfo.Size()
+	req.ContentLength = fileSize
+	// 强制使用 HTTP/1.1 并启用 Keep-Alive
+	req.Header.Set("Connection", "keep-alive")
+	req.ProtoMajor = 1
+	req.ProtoMinor = 1
 	
-	// 执行上传
-	client := &http.Client{
-		Timeout: 30 * time.Minute,
-	}
-	
-	resp, err := client.Do(req)
+	// 执行上传（使用共享的客户端）
+	resp, err := tc.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 	
+	// 读取响应体（确保连接可以被复用）
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close() // 立即关闭响应体
+	
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+	
+	// 检查响应状态
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("服务器返回错误: %s", string(body))
 	}
 	
-	fmt.Println() // 换行
 	return nil
 }
 
@@ -268,15 +363,24 @@ func (pr *progressReader) printProgress() {
 	filled := int(float64(barLength) * float64(pr.Current) / float64(pr.Total))
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barLength-filled)
 	
-	// 清除当前行并打印进度
-	fmt.Printf("\r上传进度: [%s] %.1f%% (%s/%s) 速度: %s/s",
-		bar, percentage,
-		formatSize(pr.Current), formatSize(pr.Total),
-		formatSize(int64(speed)))
+	// 构建固定长度的输出字符串，避免残影
+	const lineWidth = 120 // 固定行宽
+	
+	// 格式化各个部分，确保固定宽度
+	percentStr := fmt.Sprintf("%5.1f%%", percentage) // 固定5字符宽
+	sizeStr := fmt.Sprintf("%s/%s", formatSize(pr.Current), formatSize(pr.Total))
+	speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
+	
+	output := fmt.Sprintf("上传进度: [%s] %s %-20s 速度: %-12s",
+		bar, percentStr, sizeStr, speedStr)
 	
 	if eta > 0 && pr.Current < pr.Total {
-		fmt.Printf(" 剩余: %d秒", int(eta))
+		etaStr := fmt.Sprintf("剩余: %d秒", int(eta))
+		output = fmt.Sprintf("%s %-15s", output, etaStr)
 	}
+	
+	// 使用固定宽度输出，多余部分用空格填充，避免残影
+	fmt.Printf("\r%-*s", lineWidth, output)
 }
 
 // getDirStats 获取目录统计信息

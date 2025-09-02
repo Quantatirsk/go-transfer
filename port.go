@@ -205,3 +205,28 @@ func handlePortConflict(port int) bool {
 		fmt.Println("请输入 y(是) 或 n(否)")
 	}
 }
+
+// OptimizeWindowsTCP 显示 Windows TCP 优化建议
+func OptimizeWindowsTCP() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	
+	fmt.Println("\n📌 Windows TCP 优化建议：")
+	fmt.Println("   如果频繁遇到端口耗尽问题，可以以管理员身份运行以下命令：")
+	fmt.Println()
+	fmt.Println("   1. 增加动态端口范围（默认约16000个）：")
+	fmt.Println("      netsh int ipv4 set dynamicport tcp start=10000 num=50000")
+	fmt.Println()
+	fmt.Println("   2. 减少 TIME_WAIT 时间（默认120秒）：")
+	fmt.Println("      reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters /v TcpTimedWaitDelay /t REG_DWORD /d 30 /f")
+	fmt.Println()
+	fmt.Println("   3. 启用端口快速回收：")
+	fmt.Println("      reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters /v TcpMaxDataRetransmissions /t REG_DWORD /d 3 /f")
+	fmt.Println()
+	fmt.Println("   4. 查看当前 TCP 连接状态：")
+	fmt.Println("      netstat -an | find /c \"TIME_WAIT\"")
+	fmt.Println()
+	fmt.Println("   注意：修改系统设置后需要重启计算机生效")
+	fmt.Println()
+}
