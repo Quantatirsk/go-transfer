@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+
 // extractFileName 从请求中提取文件名
 func extractFileName(r *http.Request) string {
 	// 从URL参数获取文件名
@@ -30,6 +31,7 @@ func StreamUploadHandler(ft *FileTransfer) http.HandlerFunc {
 			http.Error(w, "仅支持POST方法", http.StatusMethodNotAllowed)
 			return
 		}
+
 
 		// 检查Content-Type
 		contentType := r.Header.Get("Content-Type")
@@ -73,7 +75,7 @@ func handleMultipartUpload(ft *FileTransfer, w http.ResponseWriter, r *http.Requ
 	switch ft.mode {
 	case "receiver":
 		handleReceiveFile(ft, w, file, fileName, header.Size)
-	case "relay", "gateway":
+	case "forward":
 		handleForwardFile(ft, w, file, fileName, header.Size)
 	default:
 		http.Error(w, "未知服务模式", http.StatusInternalServerError)
@@ -87,7 +89,7 @@ func handleBinaryUpload(ft *FileTransfer, w http.ResponseWriter, r *http.Request
 	switch ft.mode {
 	case "receiver":
 		handleStreamReceive(ft, w, r, fileName)
-	case "relay", "gateway":
+	case "forward":
 		handleStreamForward(ft, w, r, fileName)
 	default:
 		http.Error(w, "未知服务模式", http.StatusInternalServerError)
@@ -107,7 +109,12 @@ func handleReceiveFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 		log.Printf("⬇️  开始接收: %s [FormData]", fileName)
 	}
 
-	// 创建目标文件
+	// 检查文件是否已存在
+	if _, err := os.Stat(finalPath); err == nil {
+		log.Printf("⚠️  文件已存在，将被覆盖: %s", fileName)
+	}
+
+	// 创建目标文件（如果存在则覆盖）
 	outFile, err := os.Create(finalPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("创建文件失败: %v", err), http.StatusInternalServerError)
@@ -160,7 +167,7 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 	pipeReader, pipeWriter := io.Pipe()
 	errChan := make(chan error, 1)
 
-	// 协程1: 从文件读取到管道（带进度跟踪）
+	// 协程1: 从文件读取到管道（带进度跟踪，使用大缓冲区）
 	go func() {
 		defer pipeWriter.Close()
 
@@ -174,7 +181,9 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 			LogPrefix:   "上传",
 		}
 
-		_, err := io.Copy(progressPipe, file)
+		// 使用 4MB 缓冲区提高传输效率
+		buffer := make([]byte, 4*1024*1024)
+		_, err := io.CopyBuffer(progressPipe, file, buffer)
 		errChan <- err
 	}()
 
@@ -188,12 +197,21 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 
 		if size > 0 {
 			req.ContentLength = size
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", size))
 		}
+		req.Header.Set("Content-Type", "application/octet-stream")
 
+		// 优化的 HTTP 客户端配置
 		client := &http.Client{
-			Timeout: 0, // 无超时
+			Timeout: 2 * time.Hour, // 2小时超时
 			Transport: &http.Transport{
 				DisableCompression: true,
+				DisableKeepAlives:  false,
+				IdleConnTimeout:    90 * time.Second,
+				WriteBufferSize:    4 * 1024 * 1024,
+				ReadBufferSize:     4 * 1024 * 1024,
+				MaxIdleConns:       10,
+				MaxConnsPerHost:    10,
 			},
 		}
 
@@ -205,7 +223,9 @@ func handleForwardFile(ft *FileTransfer, w http.ResponseWriter, file multipart.F
 		defer resp.Body.Close()
 
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		// 使用缓冲复制响应
+		buffer := make([]byte, 4*1024*1024)
+		io.CopyBuffer(w, resp.Body, buffer)
 		errChan <- nil
 	}()
 
@@ -244,7 +264,12 @@ func handleStreamReceive(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 		log.Printf("⬇️  开始接收: %s", fileName)
 	}
 
-	// 创建目标文件
+	// 检查文件是否已存在
+	if _, err := os.Stat(finalPath); err == nil {
+		log.Printf("⚠️  文件已存在，将被覆盖: %s", fileName)
+	}
+
+	// 创建目标文件（如果存在则覆盖）
 	outFile, err := os.Create(finalPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("创建文件失败: %v", err), http.StatusInternalServerError)
@@ -302,7 +327,7 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 	errChan := make(chan error, 1)
 	transferredBytes := int64(0)
 
-	// 协程1: 从客户端读取，写入管道（带进度跟踪）
+	// 协程1: 从客户端读取，写入管道（带进度跟踪，使用大缓冲区）
 	go func() {
 		defer pipeWriter.Close()
 
@@ -316,7 +341,9 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 			LogPrefix:   "上传",
 		}
 
-		_, err := io.Copy(progressPipe, r.Body)
+		// 使用 4MB 缓冲区提高传输效率，解决高速传输问题
+		buffer := make([]byte, 4*1024*1024)
+		_, err := io.CopyBuffer(progressPipe, r.Body, buffer)
 		if err != nil {
 			errChan <- fmt.Errorf("读取上传数据失败: %v", err)
 			return
@@ -336,17 +363,26 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 		// 复制原始请求的相关header
 		if contentLength > 0 {
 			req.ContentLength = contentLength
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", contentLength))
 		}
 		req.Header.Set("X-File-Name", fileName)
+		req.Header.Set("Content-Type", "application/octet-stream")
 
-		// 转发请求
+		// 优化的 HTTP 客户端配置，解决高速传输问题
 		client := &http.Client{
-			Timeout: 0, // 无超时，支持大文件
+			Timeout: 2 * time.Hour, // 2小时超时，支持超大文件
 			Transport: &http.Transport{
 				// 禁用请求体缓冲，实现真正的流式传输
 				DisableCompression: true,
+				DisableKeepAlives:  false,
 				// 增加空闲连接超时，支持长时间传输
-				IdleConnTimeout: 30 * time.Minute,
+				IdleConnTimeout: 90 * time.Second,
+				// 关键：增大读写缓冲区到 4MB
+				WriteBufferSize: 4 * 1024 * 1024,
+				ReadBufferSize:  4 * 1024 * 1024,
+				// 增加最大空闲连接数
+				MaxIdleConns:    10,
+				MaxConnsPerHost: 10,
 			},
 		}
 
@@ -357,9 +393,10 @@ func handleStreamForward(ft *FileTransfer, w http.ResponseWriter, r *http.Reques
 		}
 		defer resp.Body.Close()
 
-		// 将目标服务器的响应流式返回给客户端
+		// 将目标服务器的响应流式返回给客户端（使用缓冲）
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		buffer := make([]byte, 4*1024*1024)
+		io.CopyBuffer(w, resp.Body, buffer)
 
 		errChan <- nil
 	}()

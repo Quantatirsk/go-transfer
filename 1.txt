@@ -1,3 +1,0 @@
-curl -X POST "http://192.168.6.146:17002/upload?name=go-transfer-amd64" \
-     --data-binary @go-transfer-amd64 \
-     --progress-bar

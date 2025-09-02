@@ -14,10 +14,10 @@ import (
 
 // Config 简化配置结构
 type Config struct {
-	Mode        string `yaml:"mode"`         // receiver, relay, gateway
+	Mode        string `yaml:"mode"`         // receiver, forward
 	Port        int    `yaml:"port"`         // 监听端口
 	StoragePath string `yaml:"storage_path"` // receiver模式的存储路径
-	TargetURL   string `yaml:"target_url"`   // relay/gateway模式的目标URL
+	TargetURL   string `yaml:"target_url"`   // forward模式的目标URL
 }
 
 // ConfigManager 配置管理器
@@ -102,22 +102,17 @@ func (cm *ConfigManager) createConfig() (*Config, error) {
 	// 选择模式
 	fmt.Println("\n请选择运行模式:")
 	fmt.Println("  1) receiver - 接收并存储文件")
-	fmt.Println("  2) relay    - 中继转发文件")
-	fmt.Println("  3) gateway  - 网关入口")
+	fmt.Println("  2) forward  - 转发文件到下一跳")
 
 	for {
-		fmt.Print("\n请选择 [1-3]: ")
+		fmt.Print("\n请选择 [1-2]: ")
 		input, _ := reader.ReadString('\n')
-		switch strings.TrimSpace(input) {
+		trimmedInput := strings.TrimSpace(input)
+		switch trimmedInput {
 		case "1":
 			config.Mode = "receiver"
-			break
 		case "2":
-			config.Mode = "relay"
-			break
-		case "3":
-			config.Mode = "gateway"
-			break
+			config.Mode = "forward"
 		default:
 			fmt.Println("无效选择")
 			continue
@@ -170,7 +165,7 @@ func (cm *ConfigManager) createConfig() (*Config, error) {
 			config.StoragePath = path
 		}
 
-	case "relay", "gateway":
+	case "forward":
 		fmt.Print("\n目标服务器URL: ")
 		url, _ := reader.ReadString('\n')
 		url = strings.TrimSpace(url)

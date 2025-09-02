@@ -1,0 +1,11 @@
+# Go-Transfer GUI 依赖
+# Python 3.6+
+
+# 打包工具
+pyinstaller>=5.0
+
+# 注意：tkinter 是 Python 标准库的一部分，不需要额外安装
+# 如果在 Linux 上缺少 tkinter，请运行：
+# Ubuntu/Debian: sudo apt-get install python3-tk
+# CentOS/RHEL: sudo yum install python3-tkinter
+# macOS: tkinter 已包含在 Python 中

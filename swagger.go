@@ -75,7 +75,7 @@ func generateSwaggerJSON(host string) string {
 									"mode": map[string]interface{}{
 										"type":        "string",
 										"description": "运行模式",
-										"enum":        []string{"receiver", "relay", "gateway"},
+										"enum":        []string{"receiver", "forward"},
 									},
 									"port": map[string]interface{}{
 										"type":        "integer",
