@@ -36,3 +36,6 @@ go-transfer-*
 
 # Test files
 test.sh
+
+# YoYo AI version control directory
+.yoyo/
