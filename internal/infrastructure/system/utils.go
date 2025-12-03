@@ -1,14 +1,16 @@
-package main
+package system
 
 import (
 	"fmt"
 	"os/user"
 	"path/filepath"
 	"strings"
+
+	"go-transfer/internal/constants"
 )
 
-// formatSize 格式化文件大小为人类可读格式
-func formatSize(bytes int64) string {
+// FormatSize 格式化文件大小为人类可读格式
+func FormatSize(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
 		return fmt.Sprintf("%d B", bytes)
@@ -21,8 +23,8 @@ func formatSize(bytes int64) string {
 	return fmt.Sprintf("%.2f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// expandPath 展开路径中的 ~ 符号为用户主目录
-func expandPath(path string) string {
+// ExpandPath 展开路径中的 ~ 符号为用户主目录
+func ExpandPath(path string) string {
 	if !strings.HasPrefix(path, "~") {
 		return path
 	}
@@ -43,31 +45,31 @@ func expandPath(path string) string {
 	return path
 }
 
-// printSeparator 打印分隔线
-func printSeparator() {
-	fmt.Println(SeparatorLine)
+// PrintSeparator 打印分隔线
+func PrintSeparator() {
+	fmt.Println(constants.SeparatorLine)
 }
 
-// clearLine 清除当前行并输出固定宽度的内容（避免进度条残影）
-func clearLine(content string) {
-	fmt.Printf("\r%-*s", ProgressLineWidth, content)
+// ClearLine 清除当前行并输出固定宽度的内容（避免进度条残影）
+func ClearLine(content string) {
+	fmt.Printf("\r%-*s", constants.ProgressLineWidth, content)
 }
 
 // buildProgressBar 构建进度条字符串
 func buildProgressBar(current, total int64) string {
 	if total == 0 {
-		return strings.Repeat("░", ProgressBarLength)
+		return strings.Repeat("░", constants.ProgressBarLength)
 	}
 	
-	filled := int(float64(ProgressBarLength) * float64(current) / float64(total))
-	if filled > ProgressBarLength {
-		filled = ProgressBarLength
+	filled := int(float64(constants.ProgressBarLength) * float64(current) / float64(total))
+	if filled > constants.ProgressBarLength {
+		filled = constants.ProgressBarLength
 	}
 	if filled < 0 {
 		filled = 0
 	}
 	
-	return strings.Repeat("█", filled) + strings.Repeat("░", ProgressBarLength-filled)
+	return strings.Repeat("█", filled) + strings.Repeat("░", constants.ProgressBarLength-filled)
 }
 
 // calculateSpeed 计算传输速度

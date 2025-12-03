@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"encoding/json"
@@ -104,8 +104,8 @@ func generateSwaggerJSON(host string) string {
 	return string(jsonData)
 }
 
-// handleSwaggerJSON 处理Swagger JSON请求
-func handleSwaggerJSON(w http.ResponseWriter, r *http.Request) {
+// HandleSwaggerJSON 处理Swagger JSON请求
+func HandleSwaggerJSON(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	if host == "" {
 		host = "localhost:17002"
@@ -115,8 +115,8 @@ func handleSwaggerJSON(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(generateSwaggerJSON(host)))
 }
 
-// handleSwaggerUI 处理Swagger UI请求
-func handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
+// HandleSwaggerUI 处理Swagger UI请求
+func HandleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	html := `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

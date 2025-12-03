@@ -1,15 +1,19 @@
-package main
+package client
 
 import (
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go-transfer/internal/constants"
+	"go-transfer/internal/infrastructure/progress"
+	"go-transfer/internal/infrastructure/system"
+	"go-transfer/internal/infrastructure/web"
 )
 
 // TransferClient 文件传输客户端
@@ -20,34 +24,30 @@ type TransferClient struct {
 	httpClient *http.Client
 }
 
+// SetFilePath 设置文件路径
+func (tc *TransferClient) SetFilePath(path string) {
+	tc.filePath = path
+}
+
+// SetServerURL 设置服务器URL
+func (tc *TransferClient) SetServerURL(url string) {
+	tc.serverURL = url
+}
+
+// SetIsDir 设置是否为目录
+func (tc *TransferClient) SetIsDir(isDir bool) {
+	tc.isDir = isDir
+}
+
+// GetDirStats 获取目录统计信息
+func (tc *TransferClient) GetDirStats(dirPath string) (int, int64) {
+	return tc.getDirStats(dirPath)
+}
+
 // NewTransferClient 创建新的传输客户端
 func NewTransferClient() *TransferClient {
-	// 创建优化的 HTTP 客户端
-	transport := &http.Transport{
-		// 关键设置：限制连接数为1，强制串行和连接复用
-		MaxConnsPerHost:     MaxConnsPerHost,
-		MaxIdleConnsPerHost: MaxIdleConnsPerHost,
-		MaxIdleConns:        MaxIdleConns,
-		IdleConnTimeout:     IdleConnTimeout,
-		DisableKeepAlives:   false, // 必须启用 Keep-Alive 来复用连接
-		// 关键：强制 HTTP/1.1，避免 HTTP/2 的多路复用问题
-		ForceAttemptHTTP2: false,
-		// 增加响应头超时，避免慢速服务器导致的问题
-		ResponseHeaderTimeout: ResponseTimeout,
-		// 启用 TCP Keep-Alive 保持连接活跃
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second, // TCP Keep-Alive
-		}).DialContext,
-	}
-	
-	client := &http.Client{
-		Timeout:   DefaultTimeout,
-		Transport: transport,
-	}
-	
 	return &TransferClient{
-		httpClient: client,
+		httpClient: web.CreateUploadClient(),
 	}
 }
 
@@ -55,9 +55,9 @@ func NewTransferClient() *TransferClient {
 // Upload 执行上传
 func (tc *TransferClient) Upload() error {
 	fmt.Println()
-	printSeparator()
+	system.PrintSeparator()
 	fmt.Println("⏳ 开始传输...")
-	printSeparator()
+	system.PrintSeparator()
 	
 	startTime := time.Now()
 	
@@ -93,10 +93,10 @@ func (tc *TransferClient) uploadFile() error {
 	fileName := filepath.Base(tc.filePath)
 	
 	fmt.Printf("📁 文件: %s\n", fileName)
-	fmt.Printf("📊 大小: %s\n", formatSize(fileSize))
+	fmt.Printf("📊 大小: %s\n", system.FormatSize(fileSize))
 	
 	// 创建进度读取器
-	reader := NewProgressReader(file, fileSize, "上传进度")
+	reader := progress.NewProgressReader(file, fileSize, "上传进度")
 	
 	// 构建上传URL，文件名不包含路径
 	uploadURL := fmt.Sprintf("%s/upload?name=%s", tc.serverURL, url.QueryEscape(fileName))
@@ -184,12 +184,12 @@ func (tc *TransferClient) uploadDirectory() error {
 		return fmt.Errorf("目录中没有文件")
 	}
 	
-	fmt.Printf("📂 准备上传 %d 个文件，总大小: %s\n\n", len(files), formatSize(totalSize))
+	fmt.Printf("📂 准备上传 %d 个文件，总大小: %s\n\n", len(files), system.FormatSize(totalSize))
 	
 	
 	// 逐个上传文件（严格串行，一次只上传一个）
 	for i, fileInfo := range files {
-		fmt.Printf("[%d/%d] 上传: %s (%s)\n", i+1, len(files), fileInfo.relPath, formatSize(fileInfo.size))
+		fmt.Printf("[%d/%d] 上传: %s (%s)\n", i+1, len(files), fileInfo.relPath, system.FormatSize(fileInfo.size))
 		
 		// 上传单个文件
 		err := tc.uploadSingleFile(fileInfo.path, fileInfo.relPath, fileInfo.size)
@@ -206,7 +206,7 @@ func (tc *TransferClient) uploadDirectory() error {
 // uploadSingleFile 上传单个文件（内部方法）
 func (tc *TransferClient) uploadSingleFile(filePath, uploadName string, fileSize int64) error {
 	// 重试机制
-	maxRetries := MaxRetries
+	maxRetries := constants.MaxRetries
 	var lastErr error
 	
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -232,7 +232,7 @@ func (tc *TransferClient) uploadSingleFile(filePath, uploadName string, fileSize
 			// 端口耗尽，等待更长时间
 			if attempt < maxRetries {
 				fmt.Printf("\n⚠️ 检测到端口耗尽，等待系统释放资源...\n")
-				time.Sleep(PortExhaustWait)
+				time.Sleep(constants.PortExhaustWait)
 			}
 		}
 	}
@@ -250,7 +250,7 @@ func (tc *TransferClient) doUploadSingleFile(filePath, uploadName string, fileSi
 	defer file.Close()
 	
 	// 创建进度读取器
-	reader := NewProgressReader(file, fileSize, "上传进度")
+	reader := progress.NewProgressReader(file, fileSize, "上传进度")
 	
 	// 构建上传URL
 	uploadURL := fmt.Sprintf("%s/upload?name=%s", tc.serverURL, url.QueryEscape(uploadName))
@@ -312,60 +312,4 @@ func (tc *TransferClient) getDirStats(dirPath string) (int, int64) {
 	return fileCount, totalSize
 }
 
-
-
-// runConfiguredClient 根据配置运行客户端
-func runConfiguredClient(config *Config) {
-	client := NewTransferClient()
-	client.filePath = expandPath(config.FilePath)
-	client.serverURL = config.TargetURL
-	
-	// 检查文件/目录
-	fileInfo, err := os.Stat(client.filePath)
-	if err != nil {
-		fmt.Printf("❌ 路径不存在: %s\n", client.filePath)
-		os.Exit(1)
-	}
-	
-	client.isDir = fileInfo.IsDir()
-	
-	// 验证URL
-	if !strings.HasPrefix(client.serverURL, "http://") && !strings.HasPrefix(client.serverURL, "https://") {
-		client.serverURL = "http://" + client.serverURL
-	}
-	client.serverURL = strings.TrimSuffix(client.serverURL, "/")
-	
-	// 显示传输信息
-	fmt.Println()
-	printSeparator()
-	fmt.Println("📁 准备传输")
-	printSeparator()
-	if client.isDir {
-		fileCount, totalSize := client.getDirStats(client.filePath)
-		fmt.Printf("📂 目录: %s\n", client.filePath)
-		fmt.Printf("   包含 %d 个文件，总大小: %s\n", fileCount, formatSize(totalSize))
-	} else {
-		fmt.Printf("📄 文件: %s\n", client.filePath)
-		fmt.Printf("   大小: %s\n", formatSize(fileInfo.Size()))
-	}
-	fmt.Printf("🎯 目标: %s\n", client.serverURL)
-	
-	// 确认上传
-	fmt.Print("\n确认开始传输？[Y/n]: ")
-	var confirm string
-	fmt.Scanln(&confirm)
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-	
-	// 默认为 Y，只有明确输入 n 才取消
-	if confirm == "n" || confirm == "no" {
-		fmt.Println("已取消传输")
-		return
-	}
-	
-	// 执行上传
-	if err := client.Upload(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-}
 

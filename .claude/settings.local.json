@@ -5,7 +5,15 @@
       "Bash(pip install:*)",
       "Bash(sed:*)",
       "Bash(curl:*)",
-      "Bash(./go-transfer:*)"
+      "Bash(./go-transfer:*)",
+      "Bash(mkdir:*)",
+      "Bash(tree:*)",
+      "Bash(mv:*)",
+      "Bash(go build:*)",
+      "Bash(./gt --help)",
+      "Bash(./gt:*)",
+      "Bash(chmod:*)",
+      "Bash(./build.sh:*)"
     ],
     "deny": [],
     "ask": []

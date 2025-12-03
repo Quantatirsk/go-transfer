@@ -1,11 +1,19 @@
-package main
+package constants
 
 import "time"
 
-const (
-	// 版本信息
-	Version = "1.0.0"
+// LogLevel 日志级别
+type LogLevel int
 
+const (
+	DEBUG LogLevel = iota
+	INFO
+	WARN
+	ERROR
+	SILENT // 静默模式，不输出任何日志
+)
+
+const (
 	// UI 显示相关
 	SeparatorLine     = "========================================"
 	ProgressBarLength = 40
@@ -18,10 +26,9 @@ const (
 	WriteTimeout    = time.Hour
 	IdleConnTimeout = 300 * time.Second
 	ResponseTimeout = 60 * time.Second
-	HeaderTimeout   = 60 * time.Second
 
 	// 缓冲区大小
-	SmallBufferSize  = 256 * 1024      // 256KB - 用于流式传输，避免背压
+	SmallBufferSize  = 256 * 1024      // 256KB - 用于流式传输
 	MediumBufferSize = 512 * 1024      // 512KB - 用于HTTP传输
 	LargeBufferSize  = 4 * 1024 * 1024 // 4MB - 用于本地文件操作
 
@@ -31,9 +38,8 @@ const (
 	MaxConnsPerHost     = 1
 
 	// 重试相关
-	MaxRetries        = 3
-	RetryWaitBase     = 2 * time.Second
-	PortExhaustWait   = 5 * time.Second
+	MaxRetries      = 3
+	PortExhaustWait = 5 * time.Second
 
 	// 进度更新
 	ProgressUpdateInterval = 100 * time.Millisecond

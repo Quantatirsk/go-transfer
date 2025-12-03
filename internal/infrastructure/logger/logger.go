@@ -1,4 +1,4 @@
-package main
+package logger
 
 import (
 	"fmt"
@@ -22,16 +22,14 @@ const (
 type Logger struct {
 	mu       sync.RWMutex
 	level    LogLevel
-	verbose  bool
 	logger   *log.Logger
 	disabled bool
 }
 
 // GlobalLogger 全局日志实例
 var GlobalLogger = &Logger{
-	level:   INFO,
-	verbose: false,
-	logger:  log.New(os.Stdout, "", log.LstdFlags),
+	level:  INFO,
+	logger: log.New(os.Stdout, "", log.LstdFlags),
 }
 
 // SetLevel 设置日志级别
@@ -45,7 +43,6 @@ func (l *Logger) SetLevel(level LogLevel) {
 func (l *Logger) SetVerbose(verbose bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.verbose = verbose
 	if verbose {
 		l.level = DEBUG
 	}
@@ -90,27 +87,6 @@ func (l *Logger) Success(format string, v ...interface{}) {
 	}
 }
 
-// Progress 进度日志（始终显示）
-func (l *Logger) Progress(format string, v ...interface{}) {
-	l.mu.RLock()
-	disabled := l.disabled
-	l.mu.RUnlock()
-	
-	if !disabled {
-		msg := fmt.Sprintf(format, v...)
-		fmt.Printf("%s\n", msg)
-	}
-}
-
-// Print 直接输出（用于必要的用户交互）
-func (l *Logger) Print(format string, v ...interface{}) {
-	fmt.Printf(format, v...)
-}
-
-// Println 直接输出带换行
-func (l *Logger) Println(v ...interface{}) {
-	fmt.Println(v...)
-}
 
 // 内部日志方法
 func (l *Logger) log(level LogLevel, prefix string, format string, v ...interface{}) {
@@ -157,7 +133,4 @@ func LogSuccess(format string, v ...interface{}) {
 	GlobalLogger.Success(format, v...)
 }
 
-func LogProgress(format string, v ...interface{}) {
-	GlobalLogger.Progress(format, v...)
-}
 

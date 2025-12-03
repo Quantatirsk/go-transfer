@@ -1,4 +1,4 @@
-package main
+package system
 
 import (
 	"bufio"
@@ -11,8 +11,8 @@ import (
 	"strings"
 )
 
-// checkPortInUse 检查端口是否被占用
-func checkPortInUse(port int) bool {
+// CheckPortInUse 检查端口是否被占用
+func CheckPortInUse(port int) bool {
 	addr := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -22,8 +22,8 @@ func checkPortInUse(port int) bool {
 	return false // 端口可用
 }
 
-// findProcessUsingPort 查找占用端口的进程
-func findProcessUsingPort(port int) (pid int, processName string, err error) {
+// FindProcessUsingPort 查找占用端口的进程
+func FindProcessUsingPort(port int) (pid int, processName string, err error) {
 	switch runtime.GOOS {
 	case "darwin", "linux":
 		return findProcessUnix(port)
@@ -138,12 +138,12 @@ func killProcess(pid int) error {
 	return cmd.Run()
 }
 
-// handlePortConflict 处理端口冲突
-func handlePortConflict(port int) bool {
+// HandlePortConflict 处理端口冲突
+func HandlePortConflict(port int) bool {
 	fmt.Printf("\n⚠️  端口 %d 已被占用\n", port)
 	
 	// 查找占用端口的进程
-	pid, processName, err := findProcessUsingPort(port)
+	pid, processName, err := FindProcessUsingPort(port)
 	if err != nil {
 		fmt.Printf("无法确定占用端口的进程: %v\n", err)
 		fmt.Println("\n请手动释放端口或选择其他端口")
@@ -175,7 +175,7 @@ func handlePortConflict(port int) bool {
 			// 等待一下让端口释放
 			fmt.Print("等待端口释放...")
 			for i := 0; i < 3; i++ {
-				if !checkPortInUse(port) {
+				if !CheckPortInUse(port) {
 					fmt.Println(" 完成!")
 					return true
 				}
@@ -189,7 +189,7 @@ func handlePortConflict(port int) bool {
 			}
 			
 			// 再次检查
-			if !checkPortInUse(port) {
+			if !CheckPortInUse(port) {
 				fmt.Println(" 完成!")
 				return true
 			}

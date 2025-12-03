@@ -1,4 +1,4 @@
-package main
+package progress
 
 import (
 	"fmt"
@@ -6,18 +6,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// ProgressTracker 统一的进度跟踪接口
-type ProgressTracker interface {
-	io.Writer
-	io.Reader
-	SetTotal(total int64)
-	GetProgress() (current, total int64, percentage float64)
-	GetSpeed() float64
-	GetETA() time.Duration
-	PrintProgress()
-}
+	"go-transfer/internal/constants"
+	"go-transfer/internal/infrastructure/system"
+)
 
 // Progress 统一的进度跟踪器实现
 type Progress struct {
@@ -162,8 +154,8 @@ func (p *Progress) PrintProgress() {
 		
 		// 格式化输出
 		percentStr := fmt.Sprintf("%5.1f%%", percentage)
-		sizeStr := fmt.Sprintf("%s/%s", formatSize(current), formatSize(total))
-		speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
+		sizeStr := fmt.Sprintf("%s/%s", system.FormatSize(current), system.FormatSize(total))
+		speedStr := fmt.Sprintf("%s/s", system.FormatSize(int64(speed)))
 		
 		output = fmt.Sprintf("%s: [%s] %s %-20s 速度: %-12s",
 			p.prefix, bar, percentStr, sizeStr, speedStr)
@@ -174,13 +166,13 @@ func (p *Progress) PrintProgress() {
 		}
 	} else {
 		// 未知大小时的进度显示
-		sizeStr := formatSize(current)
-		speedStr := fmt.Sprintf("%s/s", formatSize(int64(speed)))
+		sizeStr := system.FormatSize(current)
+		speedStr := fmt.Sprintf("%s/s", system.FormatSize(int64(speed)))
 		output = fmt.Sprintf("%s: %-15s 速度: %-12s", p.prefix, sizeStr, speedStr)
 	}
 	
 	// 使用固定宽度输出，避免残影
-	clearLine(output)
+	system.ClearLine(output)
 	p.lastPrint = time.Now()
 }
 
@@ -195,35 +187,22 @@ func (p *Progress) addProgress(n int64) {
 func (p *Progress) shouldPrint() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return time.Since(p.lastPrint) >= ProgressUpdateInterval
+	return time.Since(p.lastPrint) >= constants.ProgressUpdateInterval
 }
 
 func (p *Progress) buildProgressBar(current, total int64) string {
 	if total <= 0 {
-		return strings.Repeat("░", ProgressBarLength)
+		return strings.Repeat("░", constants.ProgressBarLength)
 	}
 	
-	filled := int(float64(ProgressBarLength) * float64(current) / float64(total))
-	if filled > ProgressBarLength {
-		filled = ProgressBarLength
+	filled := int(float64(constants.ProgressBarLength) * float64(current) / float64(total))
+	if filled > constants.ProgressBarLength {
+		filled = constants.ProgressBarLength
 	}
 	if filled < 0 {
 		filled = 0
 	}
 	
-	return strings.Repeat("█", filled) + strings.Repeat("░", ProgressBarLength-filled)
+	return strings.Repeat("█", filled) + strings.Repeat("░", constants.ProgressBarLength-filled)
 }
 
-// ProgressConfig 进度显示配置
-type ProgressConfig struct {
-	ShowBar      bool          // 是否显示进度条
-	UpdateInterval time.Duration // 更新间隔
-	Prefix       string        // 前缀文本
-}
-
-// DefaultProgressConfig 默认配置
-var DefaultProgressConfig = ProgressConfig{
-	ShowBar:        true,
-	UpdateInterval: ProgressUpdateInterval,
-	Prefix:         "进度",
-}

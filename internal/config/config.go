@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"bufio"
@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"go-transfer/internal/infrastructure/system"
 )
 
 // Config 简化配置结构
@@ -46,7 +47,7 @@ func (cm *ConfigManager) LoadOrCreateConfig() (*Config, error) {
 		cm.displayConfig(config)
 
 		// 对于服务器模式，检查端口是否被占用
-		if config.Mode != "client" && checkPortInUse(config.Port) {
+		if config.Mode != "client" && system.CheckPortInUse(config.Port) {
 			fmt.Printf("\n⚠️  检测到端口 %d 被占用\n", config.Port)
 		}
 
@@ -85,7 +86,7 @@ func (cm *ConfigManager) LoadOrCreateConfig() (*Config, error) {
 				}
 				
 				// 验证文件/目录是否存在
-				expandedPath := expandPath(filePath)
+				expandedPath := system.ExpandPath(filePath)
 				if _, err := os.Stat(expandedPath); err != nil {
 					return nil, fmt.Errorf("文件或目录不存在: %s", expandedPath)
 				}
@@ -185,11 +186,11 @@ func (cm *ConfigManager) createConfig() (*Config, error) {
 			}
 
 			// 检查端口是否被占用
-			if checkPortInUse(config.Port) {
+			if system.CheckPortInUse(config.Port) {
 				fmt.Printf("\n⚠️  端口 %d 已被占用\n", config.Port)
 
 				// 查找占用端口的进程
-				pid, processName, err := findProcessUsingPort(config.Port)
+				pid, processName, err := system.FindProcessUsingPort(config.Port)
 				if err == nil {
 					fmt.Printf("占用进程: %s (PID: %d)\n", processName, pid)
 				}
@@ -260,7 +261,7 @@ func (cm *ConfigManager) createConfig() (*Config, error) {
 		config.FilePath = filePath
 		
 		// 验证文件/目录是否存在
-		expandedPath := expandPath(filePath)
+		expandedPath := system.ExpandPath(filePath)
 		if _, err := os.Stat(expandedPath); err != nil {
 			return nil, fmt.Errorf("文件或目录不存在: %s", expandedPath)
 		}
@@ -277,7 +278,7 @@ func (cm *ConfigManager) displayConfig(config *Config) {
 	switch config.Mode {
 	case "receiver":
 		fmt.Printf("  端口: %d\n", config.Port)
-		fmt.Printf("  存储: %s\n", expandPath(config.StoragePath))
+		fmt.Printf("  存储: %s\n", system.ExpandPath(config.StoragePath))
 		fmt.Println("\n硬编码参数:")
 		fmt.Println("  监听地址: 0.0.0.0")
 		fmt.Println("  最大文件: 16GB")
